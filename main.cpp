@@ -10,6 +10,7 @@ void clearScreen() {
         system("clear");
     #endif
 }
+
 class Pet {
     public:
         std::string name;
@@ -32,97 +33,146 @@ void logo() {
 ----------------------------------------
 )";
 }
+
 void welcomeMessage() {
     logo();
-    std::cout << "Welcome to Kendra, your pet care manager!" << '\n';
-    std::cout << "Please select an option:" << '\n';
-    std::cout << "1. Add a new pet" << '\n';
-    std::cout << "2. Delete a pet" << '\n';
-    std::cout << "3. Select a pet" << '\n';
-    std::cout << "4. Exit" << '\n';
-    std::cout << '\n';
+    std::cout << "Welcome to Kendra, your pet care manager!\n";
+    std::cout << "1. Add a new pet\n";
+    std::cout << "2. Delete a pet\n";
+    std::cout << "3. Select a pet\n";
+    std::cout << "4. Exit\n\n";
 }
 
 void addPet(std::vector<Pet> &pets) {
-
     logo();
-
     std::string name;
     std::string species;
     std::string breed;
     int age;
 
-    std::cout << "Enter pet's name: ";
+    std::cout << "Enter pet's name: ";    
     std::cin >> name;
-    std::cout << "Enter pet's species: ";
+    std::cout << "Enter pet's species: "; 
     std::cin >> species;
-    std::cout << "Enter pet's breed: ";
+    std::cout << "Enter pet's breed: ";   
     std::cin >> breed;
-    std::cout << "Enter pet's age: ";
+    std::cout << "Enter pet's age: ";     
     std::cin >> age;
 
-    Pet newPet(name, species, breed, age);
-    pets.push_back(newPet);
-    std::cout << "Pet added successfully!" << '\n';
-
-
+    pets.emplace_back(name, species, breed, age);
+    clearScreen();
+    std::cout << "Pet added successfully!\n";
 }
 
 void deletePet(std::vector<Pet> &pets) {
-    for (size_t i = 0; i < pets.size(); ++i) {
-        std::cout << i + 1 << ". " << pets[i].name << " (" << pets[i].species << ")" << '\n';
-    }
+    if (pets.empty()) { std::cout << "No pets to delete.\n"; return; }
+
+    for (size_t i = 0; i < pets.size(); ++i)
+        std::cout << i + 1 << ". " << pets[i].name << " (" << pets[i].species << ")\n";
+
     std::cout << "Enter the number of the pet to delete: ";
-    int choice;
-    std::cin >> choice;
-    
+    int choice; std::cin >> choice;
+
     if (choice >= 1 && choice <= static_cast<int>(pets.size())) {
         pets.erase(pets.begin() + choice - 1);
-        std::cout << "Pet deleted successfully!" << '\n';
+        clearScreen();
+        std::cout << "Pet deleted successfully!\n";
     } else {
-        std::cout << "Invalid choice. Please try again." << '\n';
+        std::cout << "Invalid choice.\n";
+    }
+}
+
+// Sub-menu that runs for a selected pet
+void petMenu(Pet &pet) {
+    bool running = true;
+    while (running) {
+        clearScreen();
+        logo();
+        std::cout << "=== " << pet.name << " (" << pet.species << ", " << pet.breed << ", age " << pet.age << ") ===\n\n";
+        std::cout << "1. View info\n";
+        std::cout << "2. Update age\n";
+        std::cout << "3. Back to main menu\n\n";
+        std::cout << "Enter your choice: ";
+
+        int choice; std::cin >> choice;
+        clearScreen();
+
+        switch (choice) {
+            case 1:
+                std::cout << "Name:    " << pet.name    << "\n";
+                std::cout << "Species: " << pet.species << "\n";
+                std::cout << "Breed:   " << pet.breed   << "\n";
+                std::cout << "Age:     " << pet.age     << "\n";
+                std::cout << "\nPress Enter to continue...";
+                std::cin.ignore(); std::cin.get();
+                break;
+            case 2:
+                std::cout << "Enter new age: ";
+                std::cin >> pet.age;
+                std::cout << "Age updated!\n";
+                std::cout << "\nPress Enter to continue...";
+                std::cin.ignore(); std::cin.get();
+                break;
+            case 3:
+                running = false; // ← exits THIS loop, returns to main menu
+                break;
+            default:
+                std::cout << "Invalid choice.\n";
+        }
     }
 }
 
 void selectPet(std::vector<Pet> &pets) {
-    for (size_t i = 0; i < pets.size(); ++i) {
-        std::cout << i + 1 << ". " << pets[i].name << " (" << pets[i].species << ")" << '\n';
+    if (pets.empty()) { std::cout << "No pets added yet.\n"; return; }
+
+    for (size_t i = 0; i < pets.size(); ++i)
+        std::cout << i + 1 << ". " << pets[i].name << " (" << pets[i].species << ")\n";
+
+    std::cout << "Enter the number of the pet to select (0 to cancel): ";
+    int choice; std::cin >> choice;
+
+    if (choice >= 1 && choice <= static_cast<int>(pets.size())) {
+        clearScreen();
+        petMenu(pets[static_cast<size_t>(choice - 1)]); // ← enters sub-loop for selected pet
     }
 }
 
-
 int main() {
     clearScreen();
-    bool running1 = true;
     std::vector<Pet> pets;
-    while (running1) {
+    bool running = true;
+
+    while (running) {
         welcomeMessage();
-        int choice;
-     std::cout << "Enter your choice: ";
-        std::cin >> choice;
+        std::cout << "Enter your choice: ";
+        int choice; std::cin >> choice;
         clearScreen();
-        switch(choice) {
-            case 1:
-                addPet(pets);
-                return false;
+
+        switch (choice) {
+            case 1: 
+                addPet(pets);    
                 break;
-            case 2:
-                deletePet(pets);
-                return false;
+            case 2: 
+                deletePet(pets); 
                 break;
-            case 3:
-                selectPet(pets);
-                return false;
+            case 3: 
+                selectPet(pets); 
                 break;
             case 4:
-                std::cout << "Thank you for using Kendra!" << '\n';
-                return false;
+                std::cout << "Thank you for using Kendra!\n";
+                running = false; // ← cleanly exits the main loop
                 break;
             default:
-                std::cout << "Invalid choice. Please try again." << '\n';
-                return false;
+                std::cout << "Invalid choice. Please try again.\n";
+        }
+
+        if (running) {
+            std::cout << "\nPress Enter to continue...";
+            std::cin.ignore(); 
+            std::cin.get();
+            clearScreen();
         }
     }
-    std::cout << running1 << '\n';
+
     return 0;
 }
