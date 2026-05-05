@@ -2,6 +2,8 @@
 #include <string>
 #include <cstdlib>
 #include <vector>
+#include <fstream>
+#include <sstream>
 
 void clearScreen() {
     #ifdef _WIN32
@@ -18,8 +20,8 @@ class Pet {
         std::string breed;
         int age;
 
-        Pet(const std::string &a, const std::string &b, const std::string &c, int d)
-            : name(a), species(b), breed(c), age(d) {}
+        Pet(const std::string &construct_name, const std::string &construct_species, const std::string &construct_breed, int construct_age)
+            : name(construct_name), species(construct_species), breed(construct_breed), age(construct_age) {}
 };
 
 void logo() {
