@@ -22,7 +22,8 @@ std::string currentTimestamp() {
     return oss.str();
 }
 
-struct FeedingSchedule {
+struct Feeding {
+    std::string feedName;
     std::string foodType;       // e.g. "dry kibble"
     int timesPerDay;            // e.g. 2
     std::string notes;          // e.g. "1 cup per serving"
@@ -50,7 +51,7 @@ public:
     std::string breed;
     int age;
 
-    FeedingSchedule feeding;
+    std::vector<Feeding> feedings;
     std::vector<Medication> medications;
     std::vector<GroomingEntry> groomingLog;
 
@@ -68,7 +69,7 @@ void logo() {
 | . \|  __/| | | | (_| | | | (_| |  
 |_|\_\\___||_| |_|\__,_|_|  \__,_|  
 ========================================
-)";
+)" << "\n";
 }
 
 void pause() {
@@ -86,74 +87,136 @@ void feedingMenu(Pet &pet) {
     while (running) {
         clearScreen();
         logo();
-        std::cout << "=== Feeding - " << pet.name << " ===\n\n";
-
-        // Show current schedule if set
-        if (!pet.feeding.foodType.empty()) {
-            std::cout << "Current schedule:\n";
-            std::cout << "  Food type  : " << pet.feeding.foodType << "\n";
-            std::cout << "  Times/day  : " << pet.feeding.timesPerDay << "\n";
-            if (!pet.feeding.notes.empty()) {
-                std::cout << "  Notes      : " << pet.feeding.notes << "\n";
+        std::cout << "=== Feedings - " << pet.name << " ===\n\n";
+ 
+        if (pet.feedings.empty()) {
+            std::cout << "No feedings on record.\n";
+        } 
+        else {
+            for (size_t i = 0; i < pet.feedings.size(); ++i) {
+                const auto &f = pet.feedings[i];
+                std::cout << i + 1 << ". " << f.feedName << " | " << f.foodType << " | " << f.timesPerDay << "x/day";
+                if (!f.notes.empty()) {
+                    std::cout << " | " << f.notes;
+                }
+                std::cout << "\n";
             }
-        } else {
-            std::cout << "No feeding schedule set yet.\n";
         }
-
+ 
         std::cout << "\n";
         printSeparator();
-        std::cout << "1. Set / update feeding schedule\n";
-        std::cout << "2. Log a feeding now\n";
-        std::cout << "3. View feeding log\n";
-        std::cout << "4. Back\n";
+        std::cout << "1. Add feeding\n";
+        std::cout << "2. Log a feeding (select)\n";
+        std::cout << "3. View feeding log (select)\n";
+        std::cout << "4. Remove feeding\n";
+        std::cout << "5. Back\n";
         printSeparator();
         std::cout << "Enter your choice: ";
-        int choice; 
+ 
+        int choice;
         std::cin >> choice;
         clearScreen();
-
+ 
         switch (choice) {
             case 1: {
                 logo();
-                std::cout << "=== Set Feeding Schedule ===\n\n";
+                std::cout << "=== Add Feeding ===\n\n";
+                Feeding f;
+                std::cout << "Feeding name (e.g. Breakfast, Lunch, Dinner): ";
+                std::cin.ignore();
+                std::getline(std::cin, f.feedName);
                 std::cout << "Food type (e.g. dry kibble): ";
-                std::cin.ignore();
-                std::getline(std::cin, pet.feeding.foodType);
+                std::getline(std::cin, f.foodType);
                 std::cout << "Times per day: ";
-                std::cin >> pet.feeding.timesPerDay;
+                std::cin >> f.timesPerDay;
                 std::cin.ignore();
-                std::cout << "Notes (leave blank to skip):\n> ";
-                std::getline(std::cin, pet.feeding.notes);
-                std::cout << "\nSchedule saved!\n";
+                std::cout << "Notes - leave blank to skip:\n> ";
+                std::getline(std::cin, f.notes);
+                pet.feedings.push_back(f);
+                std::cout << "\nFeeding added!\n";
                 pause();
                 break;
             }
             case 2: {
-                if (pet.feeding.foodType.empty()) {
-                    std::cout << "Please set a feeding schedule first.\n";
-                } 
-                else {
-                    std::string entry = currentTimestamp() + "  -  " + pet.feeding.foodType;
-                    pet.feeding.log.push_back(entry);
-                    std::cout << "Feeding logged at " << currentTimestamp() << ".\n";
+                if (pet.feedings.empty()) {
+                    std::cout << "No feedings to log.\n";
+                    pause();
+                    break;
+                }
+                logo();
+                std::cout << "=== Log Feeding - Select ===\n\n";
+                for (size_t i = 0; i < pet.feedings.size(); ++i) {
+                    std::cout << i + 1 << ". " << pet.feedings[i].feedName << "\n";
+                }
+                std::cout << "0. Cancel\n";
+                std::cout << "Choice: ";
+                int idx;
+                std::cin >> idx;
+                if (idx >= 1 && idx <= static_cast<int>(pet.feedings.size())) {
+                    auto &f = pet.feedings[static_cast<size_t>(idx - 1)];
+                    std::string entry = currentTimestamp() + "  -  " + f.foodType;
+                    f.log.push_back(entry);
+                    std::cout << "\nFeeding logged: " << entry << "\n";
                 }
                 pause();
                 break;
             }
             case 3: {
+                if (pet.feedings.empty()) {
+                    std::cout << "No feedings on record.\n";
+                    pause();
+                    break;
+                }
                 logo();
-                std::cout << "=== Feeding Log - " << pet.name << " ===\n\n";
-                if (pet.feeding.log.empty()) {
-                    std::cout << "No feedings logged yet.\n";
-                } 
-                else {
-                    for (size_t i = 0; i < pet.feeding.log.size(); ++i)
-                        std::cout << i + 1 << ". " << pet.feeding.log[i] << "\n";
+                std::cout << "=== View Feeding Log - Select ===\n\n";
+                for (size_t i = 0; i < pet.feedings.size(); ++i) {
+                    std::cout << i + 1 << ". " << pet.feedings[i].feedName << "\n";
+                }
+                std::cout << "0. Cancel\n";
+                std::cout << "Choice: ";
+                int idx;
+                std::cin >> idx;
+                clearScreen();
+                if (idx >= 1 && idx <= static_cast<int>(pet.feedings.size())) {
+                    const auto &f = pet.feedings[static_cast<size_t>(idx - 1)];
+                    logo();
+                    std::cout << "=== Feeding Log - " << f.feedName << " ===\n\n";
+                    if (f.log.empty()) {
+                        std::cout << "No feedings logged yet.\n";
+                    } 
+                    else {
+                        for (size_t j = 0; j < f.log.size(); ++j) {
+                            std::cout << j + 1 << ". " << f.log[j] << "\n";
+                        }
+                    }
                 }
                 pause();
                 break;
             }
-            case 4:
+            case 4: {
+                if (pet.feedings.empty()) {
+                    std::cout << "No feedings to remove.\n";
+                    pause();
+                    break;
+                }
+                logo();
+                std::cout << "=== Remove Feeding ===\n\n";
+                for (size_t i = 0; i < pet.feedings.size(); ++i) {
+                    std::cout << i + 1 << ". " << pet.feedings[i].feedName << "\n";
+                }
+                std::cout << "0. Cancel\n";
+                std::cout << "Choice: ";
+                int idx;
+                std::cin >> idx;
+                if (idx >= 1 && idx <= static_cast<int>(pet.feedings.size())) {
+                    std::string removed = pet.feedings[static_cast<size_t>(idx - 1)].feedName;
+                    pet.feedings.erase(pet.feedings.begin() + idx - 1);
+                    std::cout << "\n" << removed << " removed.\n";
+                }
+                pause();
+                break;
+            }
+            case 5:
                 running = false;
                 break;
             default:
