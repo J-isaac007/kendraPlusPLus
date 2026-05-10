@@ -2,8 +2,6 @@
 #include <string>
 #include <cstdlib>
 #include <vector>
-#include <fstream>
-#include <sstream>
 
 void clearScreen(){
     system("cls");
@@ -20,42 +18,6 @@ class Pet {
             : name(construct_name), species(construct_species), breed(construct_breed), age(construct_age) {}
 
 };
-
-void savePet(const std::vector<Pet> &pets) {
-    std::ofstream file("pets.txt");
-    if (!file) {
-        std::cerr << "Error opening file for writing.\n";
-        return;
-    }
-
-    for (const auto &pet : pets) {
-        file << pet.name << "," << pet.species << "," << pet.breed << "," << pet.age << "\n";
-    }
-}
-
-void loadPets(std::vector<Pet> &pets) {
-    std::ifstream file("pets.txt");
-    if (!file) {
-        return;
-    }
-
-    std::string line;
-    while (std::getline(file, line)) {
-        std::istringstream ss(line);
-        std::string name;
-        std::string species;
-        std::string breed;
-        std::string ageStr;
-
-        std::getline(ss, name, ',');
-        std::getline(ss, species, ',');
-        std::getline(ss, breed, ',');
-        std::getline(ss, ageStr, ',');
-        if (!pets.empty()) {
-            pets.emplace_back(name, species, breed, std::stoi(ageStr));
-        }
-    }
-}
 
 void logo() {
     std::cout << R"(
@@ -100,19 +62,25 @@ void addPet(std::vector<Pet> &pets) {
 }
 
 void deletePet(std::vector<Pet> &pets) {
-    if (pets.empty()) { std::cout << "No pets to delete.\n"; return; }
+    if (pets.empty()) { 
+        std::cout << "No pets to delete.\n"; 
+        return; 
+    }
 
-    for (size_t i = 0; i < pets.size(); ++i)
+    for (size_t i = 0; i < pets.size(); ++i) {
         std::cout << i + 1 << ". " << pets[i].name << " (" << pets[i].species << ")\n";
+    }
 
     std::cout << "Enter the number of the pet to delete: ";
-    int choice; std::cin >> choice;
+    int choice; 
+    std::cin >> choice;
 
     if (choice >= 1 && choice <= static_cast<int>(pets.size())) {
         pets.erase(pets.begin() + choice - 1);
         clearScreen();
         std::cout << "Pet deleted successfully!\n";
-    } else {
+    } 
+    else {
         std::cout << "Invalid choice.\n";
     }
 }
@@ -125,8 +93,13 @@ void petMenu(Pet &pet) {
         logo();
         std::cout << "=== " << pet.name << " (" << pet.species << ", " << pet.breed << ", age " << pet.age << ") ===\n\n";
         std::cout << "1. View info\n";
-        std::cout << "2. Update age\n";
-        std::cout << "3. Back to main menu\n\n";
+        std::cout << "2. Update info\n";
+        std::cout << "=========================\n";
+        std::cout << "3. feeding\n";
+        std::cout << "4. medication\n";
+        std::cout << "5. grooming\n";
+        std::cout << "=========================\n";
+        std::cout << "6. Back to main menu\n\n";
         std::cout << "Enter your choice: ";
 
         int choice; 
@@ -144,14 +117,38 @@ void petMenu(Pet &pet) {
                 std::cin.get();
                 break;
             case 2:
+                std::cout << "Enter new name: ";
+                std::cin >> pet.name;
+                std::cout << "Enter new species: ";
+                std::cin >> pet.species;
+                std::cout << "Enter new breed: ";
+                std::cin >> pet.breed;
                 std::cout << "Enter new age: ";
                 std::cin >> pet.age;
-                std::cout << "Age updated!\n";
+                std::cout << "Pet info updated!\n";
                 std::cout << "\nPress Enter to continue...";
                 std::cin.ignore(); 
                 std::cin.get();
                 break;
             case 3:
+                std::cout << "Feeding " << pet.name << "...\n";
+                std::cout << "\nPress Enter to continue...";
+                std::cin.ignore();
+                std::cin.get();
+                break;
+            case 4:
+                std::cout << "Administering medication to " << pet.name << "...\n";
+                std::cout << "\nPress Enter to continue...";
+                std::cin.ignore();
+                std::cin.get();
+                break;
+            case 5:
+                std::cout << "Grooming " << pet.name << "...\n";
+                std::cout << "\nPress Enter to continue...";
+                std::cin.ignore();
+                std::cin.get();
+                break;
+            case 6:
                 running = false; // ← exits THIS loop, returns to main menu
                 break;
             default:
@@ -169,6 +166,7 @@ void selectPet(std::vector<Pet> &pets) {
     for (size_t i = 0; i < pets.size(); ++i) {
         std::cout << i + 1 << ". " << pets[i].name << " (" << pets[i].species << ")\n";
     }
+
     std::cout << "Enter the number of the pet to select (0 to cancel): ";
     int choice; 
     std::cin >> choice;
@@ -187,21 +185,19 @@ int main() {
     while (running) {
         welcomeMessage();
         std::cout << "Enter your choice: ";
-        int choice; std::cin >> choice;
+        int choice; 
+        std::cin >> choice;
         clearScreen();
 
         switch (choice) {
             case 1: 
-                addPet(pets);    
-                savePet(pets);
+                addPet(pets);
                 break;
             case 2: 
                 deletePet(pets); 
-                savePet(pets);
                 break;
             case 3: 
                 selectPet(pets); 
-                savePet(pets);
                 break;
             case 4:
                 std::cout << "Thank you for using Kendra!\n";
