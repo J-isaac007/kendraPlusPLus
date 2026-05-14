@@ -5,8 +5,11 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <sqlite3.h>
 
-void clearScreen(){
+static sqlite3 *db = nullptr;
+
+void clearScreen() {
     system("cls");
 }
 
@@ -14,23 +17,25 @@ std::string currentTimestamp() {
     std::time_t now = std::time(nullptr);
     std::tm *lt = std::localtime(&now);
     std::ostringstream oss;
-    oss << std::setfill('0') << (lt->tm_year + 1900) 
-        << "-" << std::setw(2) << (lt->tm_mon + 1) 
-        << "-" << std::setw(2) << lt->tm_mday 
-        << " " << std::setw(2) << lt->tm_hour 
+    oss << std::setfill('0') << (lt->tm_year + 1900)
+        << "-" << std::setw(2) << (lt->tm_mon + 1)
+        << "-" << std::setw(2) << lt->tm_mday
+        << " " << std::setw(2) << lt->tm_hour
         << ":" << std::setw(2) << lt->tm_min;
     return oss.str();
 }
 
 struct Feeding {
+    int id;
     std::string feedName;
-    std::string foodType;       // e.g. "dry kibble"
-    int timesPerDay;            // e.g. 2
-    std::string notes;          // e.g. "1 cup per serving"
-    std::vector<std::string> log; // timestamped feeding entries
+    std::string foodType;
+    int timesPerDay;
+    std::string notes;
+    std::vector<std::string> log; // loaded on demand
 };
 
 struct Medication {
+    int id;
     std::string name;
     std::string dosage;
     int timesPerDay;
@@ -39,13 +44,15 @@ struct Medication {
 };
 
 struct GroomingEntry {
-    std::string type;       // Bath, Haircut, Nails, Brushing, Other
+    int id;
+    std::string type;
     std::string timestamp;
     std::string notes;
 };
 
 class Pet {
 public:
+    int id;
     std::string name;
     std::string species;
     std::string breed;
@@ -55,10 +62,296 @@ public:
     std::vector<Medication> medications;
     std::vector<GroomingEntry> groomingLog;
 
-    Pet(const std::string &n, const std::string &s,
+    Pet(int i, const std::string &n, const std::string &s,
         const std::string &b, int a)
-        : name(n), species(s), breed(b), age(a) {}
+        : id(i), name(n), species(s), breed(b), age(a) {}
 };
+
+void dbExec(const std::string &sql) {
+    char *err = nullptr;
+    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err) != SQLITE_OK) {
+        std::cerr << "DB error: " << err << "\n";
+        sqlite3_free(err);
+    }
+}
+
+void initDB() {
+    if (sqlite3_open("kendra.db", &db) != SQLITE_OK) {
+        std::cerr << "Cannot open database: " << sqlite3_errmsg(db) << "\n";
+        exit(1);
+    }
+
+    dbExec("PRAGMA foreign_keys = ON;");
+
+    dbExec(R"(
+        CREATE TABLE IF NOT EXISTS pets (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            name    TEXT NOT NULL,
+            species TEXT NOT NULL,
+            breed   TEXT NOT NULL,
+            age     INTEGER NOT NULL
+        );
+    )");
+
+    dbExec(R"(
+        CREATE TABLE IF NOT EXISTS feedings (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            pet_id       INTEGER NOT NULL REFERENCES pets(id) ON DELETE CASCADE,
+            feed_name    TEXT NOT NULL,
+            food_type    TEXT NOT NULL,
+            times_per_day INTEGER NOT NULL,
+            notes        TEXT DEFAULT ''
+        );
+    )");
+
+    dbExec(R"(
+        CREATE TABLE IF NOT EXISTS feeding_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            feeding_id INTEGER NOT NULL REFERENCES feedings(id) ON DELETE CASCADE,
+            entry      TEXT NOT NULL
+        );
+    )");
+
+    dbExec(R"(
+        CREATE TABLE IF NOT EXISTS medications (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            pet_id       INTEGER NOT NULL REFERENCES pets(id) ON DELETE CASCADE,
+            name         TEXT NOT NULL,
+            dosage       TEXT NOT NULL,
+            times_per_day INTEGER NOT NULL,
+            notes        TEXT DEFAULT ''
+        );
+    )");
+
+    dbExec(R"(
+        CREATE TABLE IF NOT EXISTS medication_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            medication_id INTEGER NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+            entry         TEXT NOT NULL
+        );
+    )");
+
+    dbExec(R"(
+        CREATE TABLE IF NOT EXISTS grooming_log (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            pet_id    INTEGER NOT NULL REFERENCES pets(id) ON DELETE CASCADE,
+            type      TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            notes     TEXT DEFAULT ''
+        );
+    )");
+}
+
+std::vector<Pet> loadPets() {
+    std::vector<Pet> pets;
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db, "SELECT id, name, species, breed, age FROM pets ORDER BY id;", -1, &stmt, nullptr);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int id = sqlite3_column_int(stmt, 0);
+        std::string nm = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        std::string sp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        std::string br = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        int age = sqlite3_column_int(stmt, 4);
+        pets.emplace_back(id, nm, sp, br, age);
+    }
+    sqlite3_finalize(stmt);
+    return pets;
+}
+
+void loadFeedings(Pet &pet) {
+    pet.feedings.clear();
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "SELECT id, feed_name, food_type, times_per_day, notes FROM feedings WHERE pet_id=? ORDER BY id;",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, pet.id);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Feeding f;
+        f.id = sqlite3_column_int(stmt, 0);
+        f.feedName = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        f.foodType = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        f.timesPerDay = sqlite3_column_int(stmt, 3);
+        f.notes = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        pet.feedings.push_back(f);
+    }
+    sqlite3_finalize(stmt);
+
+    for (auto &f : pet.feedings) {
+        sqlite3_stmt *ls;
+        sqlite3_prepare_v2(db, "SELECT entry FROM feeding_log WHERE feeding_id=? ORDER BY id;", -1, &ls, nullptr);
+        sqlite3_bind_int(ls, 1, f.id);
+        while (sqlite3_step(ls) == SQLITE_ROW) {
+            f.log.push_back(reinterpret_cast<const char*>(sqlite3_column_text(ls, 0)));
+        }
+        sqlite3_finalize(ls);
+    }
+}
+
+void loadMedications(Pet &pet) {
+    pet.medications.clear();
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "SELECT id, name, dosage, times_per_day, notes FROM medications WHERE pet_id=? ORDER BY id;",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, pet.id);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Medication m;
+        m.id = sqlite3_column_int(stmt, 0);
+        m.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        m.dosage = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        m.timesPerDay = sqlite3_column_int(stmt, 3);
+        m.notes = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        pet.medications.push_back(m);
+    }
+    sqlite3_finalize(stmt);
+
+    for (auto &m : pet.medications) {
+        sqlite3_stmt *ls;
+        sqlite3_prepare_v2(db, "SELECT entry FROM medication_log WHERE medication_id=? ORDER BY id;", -1, &ls, nullptr);
+        sqlite3_bind_int(ls, 1, m.id);
+        while (sqlite3_step(ls) == SQLITE_ROW) {
+            m.log.push_back(reinterpret_cast<const char*>(sqlite3_column_text(ls, 0)));
+        }
+        sqlite3_finalize(ls);
+    }
+}
+
+void loadGrooming(Pet &pet) {
+    pet.groomingLog.clear();
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "SELECT id, type, timestamp, notes FROM grooming_log WHERE pet_id=? ORDER BY id;",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, pet.id);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        GroomingEntry g;
+        g.id = sqlite3_column_int(stmt, 0);
+        g.type = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        g.timestamp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        g.notes = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        pet.groomingLog.push_back(g);
+    }
+    sqlite3_finalize(stmt);
+}
+
+int dbInsertPet(const std::string &name, const std::string &species,
+                const std::string &breed, int age) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "INSERT INTO pets (name, species, breed, age) VALUES (?,?,?,?);",
+        -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, name.c_str(),    -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, species.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, breed.c_str(),   -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, age);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return static_cast<int>(sqlite3_last_insert_rowid(db));
+}
+
+void dbUpdatePet(const Pet &pet) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "UPDATE pets SET name=?, species=?, breed=?, age=? WHERE id=?;",
+        -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, pet.name.c_str(),    -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, pet.species.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, pet.breed.c_str(),   -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, pet.age);
+    sqlite3_bind_int(stmt, 5, pet.id);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void dbDeletePet(int petId) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db, "DELETE FROM pets WHERE id=?;", -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, petId);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+int dbInsertFeeding(int petId, const Feeding &f) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "INSERT INTO feedings (pet_id, feed_name, food_type, times_per_day, notes) VALUES (?,?,?,?,?);",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, petId);
+    sqlite3_bind_text(stmt, 2, f.feedName.c_str(),  -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, f.foodType.c_str(),  -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, f.timesPerDay);
+    sqlite3_bind_text(stmt, 5, f.notes.c_str(),     -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return static_cast<int>(sqlite3_last_insert_rowid(db));
+}
+
+void dbDeleteFeeding(int feedingId) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db, "DELETE FROM feedings WHERE id=?;", -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, feedingId);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void dbLogFeeding(int feedingId, const std::string &entry) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "INSERT INTO feeding_log (feeding_id, entry) VALUES (?,?);",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, feedingId);
+    sqlite3_bind_text(stmt, 2, entry.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+int dbInsertMedication(int petId, const Medication &m) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "INSERT INTO medications (pet_id, name, dosage, times_per_day, notes) VALUES (?,?,?,?,?);",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, petId);
+    sqlite3_bind_text(stmt, 2, m.name.c_str(),   -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, m.dosage.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, m.timesPerDay);
+    sqlite3_bind_text(stmt, 5, m.notes.c_str(),  -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return static_cast<int>(sqlite3_last_insert_rowid(db));
+}
+
+void dbDeleteMedication(int medId) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db, "DELETE FROM medications WHERE id=?;", -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, medId);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void dbLogMedication(int medId, const std::string &entry) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "INSERT INTO medication_log (medication_id, entry) VALUES (?,?);",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, medId);
+    sqlite3_bind_text(stmt, 2, entry.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void dbLogGrooming(int petId, const GroomingEntry &g) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db,
+        "INSERT INTO grooming_log (pet_id, type, timestamp, notes) VALUES (?,?,?,?);",
+        -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, petId);
+    sqlite3_bind_text(stmt, 2, g.type.c_str(),      -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, g.timestamp.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, g.notes.c_str(),     -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 
 void logo() {
     std::cout << R"(
@@ -85,10 +378,11 @@ void printSeparator() {
 void feedingMenu(Pet &pet) {
     bool running = true;
     while (running) {
+        loadFeedings(pet);
         clearScreen();
         logo();
         std::cout << "=== Feedings - " << pet.name << " ===\n\n";
- 
+
         if (pet.feedings.empty()) {
             std::cout << "No feedings on record.\n";
         } 
@@ -102,7 +396,7 @@ void feedingMenu(Pet &pet) {
                 std::cout << "\n";
             }
         }
- 
+
         std::cout << "\n";
         printSeparator();
         std::cout << "1. Add feeding\n";
@@ -112,16 +406,17 @@ void feedingMenu(Pet &pet) {
         std::cout << "5. Back\n";
         printSeparator();
         std::cout << "Enter your choice: ";
- 
+
         int choice;
         std::cin >> choice;
         clearScreen();
- 
+
         switch (choice) {
             case 1: {
                 logo();
                 std::cout << "=== Add Feeding ===\n\n";
                 Feeding f;
+                f.id = 0;
                 std::cout << "Feeding name (e.g. Breakfast, Lunch, Dinner): ";
                 std::cin.ignore();
                 std::getline(std::cin, f.feedName);
@@ -132,49 +427,47 @@ void feedingMenu(Pet &pet) {
                 std::cin.ignore();
                 std::cout << "Notes - leave blank to skip:\n> ";
                 std::getline(std::cin, f.notes);
-                pet.feedings.push_back(f);
+                dbInsertFeeding(pet.id, f);
                 std::cout << "\nFeeding added!\n";
                 pause();
                 break;
             }
             case 2: {
-                if (pet.feedings.empty()) {
-                    std::cout << "No feedings to log.\n";
-                    pause();
-                    break;
+                if (pet.feedings.empty()) { 
+                    std::cout << "No feedings to log.\n"; 
+                    pause(); 
+                    break; 
                 }
                 logo();
                 std::cout << "=== Log Feeding - Select ===\n\n";
                 for (size_t i = 0; i < pet.feedings.size(); ++i) {
                     std::cout << i + 1 << ". " << pet.feedings[i].feedName << "\n";
                 }
-                std::cout << "0. Cancel\n";
-                std::cout << "Choice: ";
-                int idx;
+                std::cout << "0. Cancel\nChoice: ";
+                int idx; 
                 std::cin >> idx;
                 if (idx >= 1 && idx <= static_cast<int>(pet.feedings.size())) {
                     auto &f = pet.feedings[static_cast<size_t>(idx - 1)];
                     std::string entry = currentTimestamp() + "  -  " + f.foodType;
-                    f.log.push_back(entry);
+                    dbLogFeeding(f.id, entry);
                     std::cout << "\nFeeding logged: " << entry << "\n";
                 }
                 pause();
                 break;
             }
             case 3: {
-                if (pet.feedings.empty()) {
-                    std::cout << "No feedings on record.\n";
-                    pause();
-                    break;
+                if (pet.feedings.empty()) { 
+                    std::cout << "No feedings on record.\n"; 
+                    pause(); 
+                    break; 
                 }
                 logo();
                 std::cout << "=== View Feeding Log - Select ===\n\n";
                 for (size_t i = 0; i < pet.feedings.size(); ++i) {
                     std::cout << i + 1 << ". " << pet.feedings[i].feedName << "\n";
                 }
-                std::cout << "0. Cancel\n";
-                std::cout << "Choice: ";
-                int idx;
+                std::cout << "0. Cancel\nChoice: ";
+                int idx; 
                 std::cin >> idx;
                 clearScreen();
                 if (idx >= 1 && idx <= static_cast<int>(pet.feedings.size())) {
@@ -185,32 +478,32 @@ void feedingMenu(Pet &pet) {
                         std::cout << "No feedings logged yet.\n";
                     } 
                     else {
-                        for (size_t j = 0; j < f.log.size(); ++j) {
+                        for (size_t j = 0; j < f.log.size(); ++j) { 
                             std::cout << j + 1 << ". " << f.log[j] << "\n";
-                        }
                     }
+                    }   
                 }
                 pause();
                 break;
             }
             case 4: {
-                if (pet.feedings.empty()) {
-                    std::cout << "No feedings to remove.\n";
-                    pause();
-                    break;
+                if (pet.feedings.empty()) { 
+                    std::cout << "No feedings to remove.\n"; 
+                    pause(); 
+                    break; 
                 }
                 logo();
                 std::cout << "=== Remove Feeding ===\n\n";
                 for (size_t i = 0; i < pet.feedings.size(); ++i) {
                     std::cout << i + 1 << ". " << pet.feedings[i].feedName << "\n";
                 }
-                std::cout << "0. Cancel\n";
-                std::cout << "Choice: ";
-                int idx;
+                std::cout << "0. Cancel\nChoice: ";
+                int idx; 
                 std::cin >> idx;
                 if (idx >= 1 && idx <= static_cast<int>(pet.feedings.size())) {
-                    std::string removed = pet.feedings[static_cast<size_t>(idx - 1)].feedName;
-                    pet.feedings.erase(pet.feedings.begin() + idx - 1);
+                    auto &f = pet.feedings[static_cast<size_t>(idx - 1)];
+                    std::string removed = f.feedName;
+                    dbDeleteFeeding(f.id);
                     std::cout << "\n" << removed << " removed.\n";
                 }
                 pause();
@@ -226,10 +519,10 @@ void feedingMenu(Pet &pet) {
     }
 }
 
-
 void medicationMenu(Pet &pet) {
     bool running = true;
     while (running) {
+        loadMedications(pet);
         clearScreen();
         logo();
         std::cout << "=== Medications - " << pet.name << " ===\n\n";
@@ -258,7 +551,7 @@ void medicationMenu(Pet &pet) {
         printSeparator();
         std::cout << "Enter your choice: ";
 
-        int choice; 
+        int choice;
         std::cin >> choice;
         clearScreen();
 
@@ -267,6 +560,7 @@ void medicationMenu(Pet &pet) {
                 logo();
                 std::cout << "=== Add Medication ===\n\n";
                 Medication med;
+                med.id = 0;
                 std::cout << "Medication name: ";
                 std::cin.ignore();
                 std::getline(std::cin, med.name);
@@ -277,84 +571,83 @@ void medicationMenu(Pet &pet) {
                 std::cin.ignore();
                 std::cout << "Notes - leave blank to skip:\n> ";
                 std::getline(std::cin, med.notes);
-                pet.medications.push_back(med);
+                dbInsertMedication(pet.id, med);
                 std::cout << "\nMedication added!\n";
                 pause();
                 break;
             }
             case 2: {
-                if (pet.medications.empty()) {
-                    std::cout << "No medications to log.\n";
-                    pause();
-                    break;
+                if (pet.medications.empty()) { 
+                    std::cout << "No medications to log.\n"; 
+                    pause(); 
+                    break; 
                 }
                 logo();
                 std::cout << "=== Log Dose - Select Medication ===\n\n";
                 for (size_t i = 0; i < pet.medications.size(); ++i) {
                     std::cout << i + 1 << ". " << pet.medications[i].name << "\n";
                 }
-                std::cout << "0. Cancel\n";
-                std::cout << "Choice: ";
+                std::cout << "0. Cancel\nChoice: ";
                 int idx; 
                 std::cin >> idx;
                 if (idx >= 1 && idx <= static_cast<int>(pet.medications.size())) {
-                    auto &med = pet.medications[static_cast<size_t>(idx - 1)];
-                    std::string entry = currentTimestamp() + "  -  " + med.dosage + " of " + med.name;
-                    med.log.push_back(entry);
+                    auto &m = pet.medications[static_cast<size_t>(idx - 1)];
+                    std::string entry = currentTimestamp() + "  -  " + m.dosage + " of " + m.name;
+                    dbLogMedication(m.id, entry);
                     std::cout << "\nDose logged: " << entry << "\n";
                 }
                 pause();
                 break;
             }
             case 3: {
-                if (pet.medications.empty()) {
-                    std::cout << "No medications on record.\n";
-                    pause();
-                    break;
+                if (pet.medications.empty()) { 
+                    std::cout << "No medications on record.\n"; 
+                    pause(); 
+                    break; 
                 }
                 logo();
                 std::cout << "=== View Dose Log - Select Medication ===\n\n";
                 for (size_t i = 0; i < pet.medications.size(); ++i) {
                     std::cout << i + 1 << ". " << pet.medications[i].name << "\n";
                 }
-                std::cout << "0. Cancel\n";
-                std::cout << "Choice: ";
+                std::cout << "0. Cancel\nChoice: ";
                 int idx; 
                 std::cin >> idx;
                 clearScreen();
                 if (idx >= 1 && idx <= static_cast<int>(pet.medications.size())) {
-                    const auto &med = pet.medications[static_cast<size_t>(idx - 1)];
+                    const auto &m = pet.medications[static_cast<size_t>(idx - 1)];
                     logo();
-                    std::cout << "=== Dose Log - " << med.name << " ===\n\n";
-                    if (med.log.empty()) {
+                    std::cout << "=== Dose Log - " << m.name << " ===\n\n";
+                    if (m.log.empty()) {
                         std::cout << "No doses logged yet.\n";
                     } 
                     else {
-                        for (size_t j = 0; j < med.log.size(); ++j)
-                            std::cout << j + 1 << ". " << med.log[j] << "\n";
+                        for (size_t j = 0; j < m.log.size(); ++j) {
+                            std::cout << j + 1 << ". " << m.log[j] << "\n";
+                        }
                     }
                 }
                 pause();
                 break;
             }
             case 4: {
-                if (pet.medications.empty()) {
-                    std::cout << "No medications to remove.\n";
-                    pause();
-                    break;
+                if (pet.medications.empty()) { 
+                    std::cout << "No medications to remove.\n"; 
+                    pause(); 
+                    break; 
                 }
                 logo();
                 std::cout << "=== Remove Medication ===\n\n";
                 for (size_t i = 0; i < pet.medications.size(); ++i) {
                     std::cout << i + 1 << ". " << pet.medications[i].name << "\n";
                 }
-                std::cout << "0. Cancel\n";
-                std::cout << "Choice: ";
+                std::cout << "0. Cancel\nChoice: ";
                 int idx; 
                 std::cin >> idx;
                 if (idx >= 1 && idx <= static_cast<int>(pet.medications.size())) {
-                    std::string removed = pet.medications[static_cast<size_t>(idx - 1)].name;
-                    pet.medications.erase(pet.medications.begin() + idx - 1);
+                    auto &m = pet.medications[static_cast<size_t>(idx - 1)];
+                    std::string removed = m.name;
+                    dbDeleteMedication(m.id);
                     std::cout << "\n" << removed << " removed.\n";
                 }
                 pause();
@@ -380,7 +673,6 @@ void groomingMenu(Pet &pet) {
         clearScreen();
         logo();
         std::cout << "=== Grooming - " << pet.name << " ===\n\n";
-
         printSeparator();
         std::cout << "1. Log a grooming session\n";
         std::cout << "2. View grooming log\n";
@@ -388,7 +680,7 @@ void groomingMenu(Pet &pet) {
         printSeparator();
         std::cout << "Enter your choice: ";
 
-        int choice; 
+        int choice;
         std::cin >> choice;
         clearScreen();
 
@@ -396,14 +688,15 @@ void groomingMenu(Pet &pet) {
             case 1: {
                 logo();
                 std::cout << "=== Log Grooming Session ===\n\n";
-                std::cout << "Type of grooming:\n";
-                for (size_t i = 0; i < groomingTypes.size(); ++i)
+                for (size_t i = 0; i < groomingTypes.size(); ++i) {
                     std::cout << "  " << i + 1 << ". " << groomingTypes[i] << "\n";
+                }
                 std::cout << "Choice: ";
                 int idx; 
                 std::cin >> idx;
 
                 GroomingEntry entry;
+                entry.id = 0;
                 if (idx >= 1 && idx <= static_cast<int>(groomingTypes.size())) {
                     entry.type = groomingTypes[static_cast<size_t>(idx - 1)];
                     if (entry.type == "Other") {
@@ -424,17 +717,19 @@ void groomingMenu(Pet &pet) {
                 std::cout << "Notes - leave blank to skip:\n> ";
                 std::getline(std::cin, entry.notes);
                 entry.timestamp = currentTimestamp();
-                pet.groomingLog.push_back(entry);
+                dbLogGrooming(pet.id, entry);
                 std::cout << "\nGrooming session logged!\n";
                 pause();
                 break;
             }
             case 2: {
+                loadGrooming(pet);
                 logo();
                 std::cout << "=== Grooming Log - " << pet.name << " ===\n\n";
                 if (pet.groomingLog.empty()) {
                     std::cout << "No grooming sessions logged yet.\n";
-                } else {
+                } 
+                else {
                     for (size_t i = 0; i < pet.groomingLog.size(); ++i) {
                         const auto &g = pet.groomingLog[i];
                         std::cout << i + 1 << ". [" << g.timestamp << "]  " << g.type;
@@ -456,8 +751,6 @@ void groomingMenu(Pet &pet) {
         }
     }
 }
-
-// ─── Shared pet/main menus (unchanged structure) ─────────────────────────────
 
 void welcomeMessage() {
     logo();
@@ -484,7 +777,8 @@ void addPet(std::vector<Pet> &pets) {
     std::cout << "Enter pet's age: ";     
     std::cin >> age;
 
-    pets.emplace_back(name, species, breed, age);
+    int newId = dbInsertPet(name, species, breed, age);
+    pets.emplace_back(newId, name, species, breed, age);
     clearScreen();
     std::cout << "Pet added successfully!\n";
 }
@@ -498,12 +792,13 @@ void deletePet(std::vector<Pet> &pets) {
     for (size_t i = 0; i < pets.size(); ++i) {
         std::cout << i + 1 << ". " << pets[i].name << " (" << pets[i].species << ")\n";
     }
-
     std::cout << "Enter the number of the pet to delete: ";
     int choice; 
     std::cin >> choice;
 
     if (choice >= 1 && choice <= static_cast<int>(pets.size())) {
+        int petId = pets[static_cast<size_t>(choice - 1)].id;
+        dbDeletePet(petId);                              // cascades to all child tables
         pets.erase(pets.begin() + choice - 1);
         clearScreen();
         std::cout << "Pet deleted successfully!\n";
@@ -542,28 +837,25 @@ void petMenu(Pet &pet) {
                 pause();
                 break;
             case 2:
-                std::cout << "Enter new name: ";    
-                std::cin >> pet.name;
-                std::cout << "Enter new species: "; 
-                std::cin >> pet.species;
-                std::cout << "Enter new breed: ";   
-                std::cin >> pet.breed;
-                std::cout << "Enter new age: ";     
-                std::cin >> pet.age;
+                std::cout << "Enter new name: ";    std::cin >> pet.name;
+                std::cout << "Enter new species: "; std::cin >> pet.species;
+                std::cout << "Enter new breed: ";   std::cin >> pet.breed;
+                std::cout << "Enter new age: ";     std::cin >> pet.age;
+                dbUpdatePet(pet);
                 std::cout << "Pet info updated!\n";
                 pause();
                 break;
             case 3: 
-                feedingMenu(pet);   
+                feedingMenu(pet);    
                 break;
             case 4: 
                 medicationMenu(pet); 
                 break;
             case 5: 
-                groomingMenu(pet);  
+                groomingMenu(pet);   
                 break;
             case 6: 
-                running = false;    
+                running = false;     
                 break;
             default:
                 std::cout << "Invalid choice.\n";
@@ -591,11 +883,11 @@ void selectPet(std::vector<Pet> &pets) {
     }
 }
 
-// ─── Entry point ─────────────────────────────────────────────────────────────
-
 int main() {
+    initDB();
     clearScreen();
-    std::vector<Pet> pets;
+
+    std::vector<Pet> pets = loadPets();
     bool running = true;
 
     while (running) {
@@ -631,5 +923,6 @@ int main() {
         }
     }
 
+    sqlite3_close(db);
     return 0;
 }
