@@ -19,6 +19,11 @@ Pets are the top-level profiles. Each pet has a name, species, breed, and age. E
 Schedules (Feedings and Medications) define a routine — for example, "Breakfast, dry kibble, twice a day." Each schedule keeps its own log of every time you recorded it being done, with a timestamp.
 Grooming entries are one-off session records. Instead of a recurring schedule, each grooming log is just a snapshot: what was done, when, and any notes.
 
+- Structs
+- Vectors
+- Class
+- sqlite database
+
 ## How to Use
 When you launch Kendra, you'll see the main menu. From here you can add a new pet, delete one, or select an existing pet to manage.
 Once you select a pet, you can:
